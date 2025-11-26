@@ -154,7 +154,8 @@ export const DocumentSigningPageViewV2 = () => {
                 }
               />
 
-              {envelope.type === EnvelopeType.DOCUMENT && allowDocumentRejection && (
+              {/* Reject Document button disabled */}
+              {/* {envelope.type === EnvelopeType.DOCUMENT && allowDocumentRejection && (
                 <DocumentSigningRejectDialog
                   documentId={mapSecondaryIdToDocumentId(envelope.secondaryId)}
                   token={recipient.token}
@@ -180,7 +181,7 @@ export const DocumentSigningPageViewV2 = () => {
                     </Button>
                   }
                 />
-              )}
+              )} */}
             </div>
           )}
 

@@ -182,16 +182,18 @@ export const DocumentSigningPageViewV1 = ({
           className="block max-w-[20rem] truncate text-2xl font-semibold sm:mt-4 md:max-w-[30rem] md:text-3xl"
           title={document.title}
         >
-          {document.title}
+          {/* {document.title} */}
+          Authorization Documents
         </h1>
+        <span>Sign these to complete your sign up.</span>
 
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-y-2 sm:mt-2.5 sm:gap-y-0">
           <div className="max-w-[50ch]">
-            <span className="text-muted-foreground truncate" title={senderName}>
+            {/* <span className="text-muted-foreground truncate" title={senderName}>
               {senderName} {senderEmail}
-            </span>{' '}
+            </span>{' '} */}
             <span className="text-muted-foreground">
-              {match(recipient.role)
+              {/* {match(recipient.role)
                 .with(RecipientRole.VIEWER, () =>
                   includeSenderDetails ? (
                     <Trans>
@@ -228,7 +230,7 @@ export const DocumentSigningPageViewV1 = ({
                     <Trans>has invited you to assist this document</Trans>
                   ),
                 )
-                .otherwise(() => null)}
+                .otherwise(() => null)} */}
             </span>
           </div>
 
@@ -237,7 +239,7 @@ export const DocumentSigningPageViewV1 = ({
               envelopeId={document.envelopeId}
               token={recipient.token}
             />
-            <DocumentSigningRejectDialog documentId={document.id} token={recipient.token} />
+            {/* <DocumentSigningRejectDialog documentId={document.id} token={recipient.token} /> */}
           </div>
         </div>
 

@@ -6,3 +6,7 @@
 apps/*/public/*.js
 apps/*/public/*.cjs
 scripts/
+
+# Test scripts in root
+test-*.ts
+create-*.ts

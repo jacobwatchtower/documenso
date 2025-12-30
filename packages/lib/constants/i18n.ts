@@ -6,7 +6,9 @@ export const SUPPORTED_LANGUAGE_CODES = [
   'fr',
   'es',
   'it',
+  'nl',
   'pl',
+  'pt-BR',
   'ja',
   'ko',
   'zh',
@@ -60,9 +62,17 @@ export const SUPPORTED_LANGUAGES: Record<string, SupportedLanguage> = {
     full: 'Italian',
     short: 'it',
   },
+  nl: {
+    short: 'nl',
+    full: 'Dutch',
+  },
   pl: {
     short: 'pl',
     full: 'Polish',
+  },
+  'pt-BR': {
+    short: 'pt-BR',
+    full: 'Portuguese (Brazil)',
   },
   ja: {
     short: 'ja',

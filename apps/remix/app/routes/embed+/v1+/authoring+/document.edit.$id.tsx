@@ -41,7 +41,9 @@ export const loader = async ({ request, params }: Route.LoaderArgs) => {
   const token = url.searchParams.get('token') || '';
 
   // We also know that the token is valid, but we need the userId + teamId
-  const result = await verifyEmbeddingPresignToken({ token }).catch(() => null);
+  const result = await verifyEmbeddingPresignToken({ token, scope: `documentId:${id}` }).catch(
+    () => null,
+  );
 
   if (!result) {
     throw new Error('Invalid token');
@@ -75,6 +77,7 @@ export const loader = async ({ request, params }: Route.LoaderArgs) => {
   }));
 
   return {
+    token,
     document: {
       ...document,
       fields,
@@ -86,7 +89,7 @@ export default function EmbeddingAuthoringDocumentEditPage() {
   const { _ } = useLingui();
   const { toast } = useToast();
 
-  const { document } = useLoaderData<typeof loader>();
+  const { document, token } = useLoaderData<typeof loader>();
 
   const [hasFinishedInit, setHasFinishedInit] = useState(false);
 
@@ -321,7 +324,8 @@ export default function EmbeddingAuthoringDocumentEditPage() {
 
           <ConfigureFieldsView
             configData={configuration!}
-            documentData={document.documentData}
+            presignToken={token}
+            envelopeItem={document.envelopeItems[0]}
             defaultValues={fields ?? undefined}
             onBack={canGoBack ? handleBackToConfig : undefined}
             onSubmit={handleConfigureFieldsSubmit}

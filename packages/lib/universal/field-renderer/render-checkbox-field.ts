@@ -45,6 +45,7 @@ export const renderCheckboxFieldElement = (
   }
 
   const fieldRect = upsertFieldRect(field, options);
+  fieldRect.visible(false);
   fieldGroup.add(fieldRect);
 
   const fontSize = checkboxMeta?.fontSize || DEFAULT_STANDARD_FONT_SIZE;
@@ -172,7 +173,7 @@ export const renderCheckboxFieldElement = (
       stroke: '#374151',
       strokeWidth: 1.5,
       cornerRadius: 2,
-      fill: 'white',
+      fill: 'transparent',
     });
 
     const checkboxScale = itemSize / 16;

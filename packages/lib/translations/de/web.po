@@ -4781,6 +4781,7 @@ msgid "For example, if the claim has a new flag \"FLAG_1\" set to true, then thi
 msgstr "Wenn der Anspruch zum Beispiel das neue Flag 'FLAG_1' hat, das auf wahr gesetzt ist, wird dieser Organisation dieses Flag hinzugefügt."
 
 #: packages/lib/server-only/auth/send-forgot-password.ts
+#: packages/lib/server-only/auth/send-forgot-password.ts
 msgid "Forgot Password?"
 msgstr "Passwort vergessen?"
 
@@ -7098,11 +7099,6 @@ msgstr "Weiterleitung"
 msgid "Registration Successful"
 msgstr "Registrierung erfolgreich"
 
-#: apps/remix/app/components/general/envelope-signing/envelope-signer-header.tsx
-msgid "Reject"
-msgstr "Ablehnen"
-
-#: apps/remix/app/components/general/document-signing/document-signing-page-view-v2.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-reject-dialog.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-reject-dialog.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-reject-dialog.tsx

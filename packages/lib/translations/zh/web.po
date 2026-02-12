@@ -4781,6 +4781,7 @@ msgid "For example, if the claim has a new flag \"FLAG_1\" set to true, then thi
 msgstr "例如，如果声明中新加了一个标记“FLAG_1”并设为 true，则该组织会获得该标记。"
 
 #: packages/lib/server-only/auth/send-forgot-password.ts
+#: packages/lib/server-only/auth/send-forgot-password.ts
 msgid "Forgot Password?"
 msgstr "忘记密码？"
 
@@ -7098,11 +7099,6 @@ msgstr "正在重定向"
 msgid "Registration Successful"
 msgstr "注册成功"
 
-#: apps/remix/app/components/general/envelope-signing/envelope-signer-header.tsx
-msgid "Reject"
-msgstr "拒绝"
-
-#: apps/remix/app/components/general/document-signing/document-signing-page-view-v2.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-reject-dialog.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-reject-dialog.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-reject-dialog.tsx

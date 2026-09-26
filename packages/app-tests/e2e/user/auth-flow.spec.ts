@@ -1,11 +1,6 @@
-import { type Page, expect, test } from '@playwright/test';
-
 import { prisma } from '@documenso/prisma';
-import {
-  extractUserVerificationToken,
-  seedTestEmail,
-  seedUser,
-} from '@documenso/prisma/seed/users';
+import { extractUserVerificationToken, seedTestEmail, seedUser } from '@documenso/prisma/seed/users';
+import { expect, type Page, test } from '@playwright/test';
 
 import { signSignaturePad } from '../fixtures/signature';
 
@@ -23,7 +18,7 @@ test('[USER] can sign up with email and password', async ({ page }: { page: Page
 
   await signSignaturePad(page);
 
-  await page.getByRole('button', { name: 'Complete', exact: true }).click();
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
 
   await page.waitForURL('/unverified-account');
 

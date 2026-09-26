@@ -1,20 +1,14 @@
-import React, { forwardRef } from 'react';
-
-import { Trans, useLingui } from '@lingui/react/macro';
+import { DOCUMENT_VISIBILITY } from '@documenso/lib/constants/document-visibility';
+import { DocumentVisibility } from '@documenso/lib/types/document-visibility';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@documenso/ui/primitives/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@documenso/ui/primitives/tooltip';
+import { t } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react';
+import { Trans } from '@lingui/react/macro';
 import { TeamMemberRole } from '@prisma/client';
 import type { SelectProps } from '@radix-ui/react-select';
 import { InfoIcon } from 'lucide-react';
-
-import { DOCUMENT_VISIBILITY } from '@documenso/lib/constants/document-visibility';
-import { DocumentVisibility } from '@documenso/lib/types/document-visibility';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@documenso/ui/primitives/select';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@documenso/ui/primitives/tooltip';
+import { forwardRef } from 'react';
 
 export type DocumentVisibilitySelectType = SelectProps & {
   currentTeamMemberRole?: string;
@@ -24,11 +18,8 @@ export type DocumentVisibilitySelectType = SelectProps & {
 };
 
 export const DocumentVisibilitySelect = forwardRef<HTMLButtonElement, DocumentVisibilitySelectType>(
-  (
-    { currentTeamMemberRole, isTeamSettings = false, disabled, canUpdateVisibility, ...props },
-    ref,
-  ) => {
-    const { t } = useLingui();
+  ({ currentTeamMemberRole, isTeamSettings = false, disabled, canUpdateVisibility, ...props }, ref) => {
+    const { _ } = useLingui();
 
     const isAdmin = currentTeamMemberRole === TeamMemberRole.ADMIN;
     const isManager = currentTeamMemberRole === TeamMemberRole.MANAGER;
@@ -41,17 +32,12 @@ export const DocumentVisibilitySelect = forwardRef<HTMLButtonElement, DocumentVi
         </SelectTrigger>
 
         <SelectContent position="popper">
-          <SelectItem value={DocumentVisibility.EVERYONE}>
-            {DOCUMENT_VISIBILITY.EVERYONE.value}
-          </SelectItem>
-          <SelectItem
-            value={DocumentVisibility.MANAGER_AND_ABOVE}
-            disabled={!isAdmin && !isManager}
-          >
-            {DOCUMENT_VISIBILITY.MANAGER_AND_ABOVE.value}
+          <SelectItem value={DocumentVisibility.EVERYONE}>{_(DOCUMENT_VISIBILITY.EVERYONE.value)}</SelectItem>
+          <SelectItem value={DocumentVisibility.MANAGER_AND_ABOVE} disabled={!isAdmin && !isManager}>
+            {_(DOCUMENT_VISIBILITY.MANAGER_AND_ABOVE.value)}
           </SelectItem>
           <SelectItem value={DocumentVisibility.ADMIN} disabled={!isAdmin}>
-            {DOCUMENT_VISIBILITY.ADMIN.value}
+            {_(DOCUMENT_VISIBILITY.ADMIN.value)}
           </SelectItem>
         </SelectContent>
       </Select>
@@ -68,7 +54,7 @@ export const DocumentVisibilityTooltip = () => {
         <InfoIcon className="mx-2 h-4 w-4" />
       </TooltipTrigger>
 
-      <TooltipContent className="text-foreground max-w-md space-y-2 p-4">
+      <TooltipContent className="max-w-md space-y-2 p-4 text-foreground">
         <h2>
           <strong>
             <Trans>Document visibility</Trans>
@@ -87,8 +73,7 @@ export const DocumentVisibilityTooltip = () => {
           </li>
           <li>
             <Trans>
-              <strong>Managers and above</strong> - Only managers and above can access and view the
-              document
+              <strong>Managers and above</strong> - Only managers and above can access and view the document
             </Trans>
           </li>
           <li>

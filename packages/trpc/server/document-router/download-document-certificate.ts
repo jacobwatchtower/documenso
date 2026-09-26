@@ -1,12 +1,10 @@
-import { EnvelopeType } from '@prisma/client';
-import { DateTime } from 'luxon';
-
-import { NEXT_PUBLIC_WEBAPP_URL } from '@documenso/lib/constants/app';
-import { AppError } from '@documenso/lib/errors/app-error';
-import { encryptSecondaryData } from '@documenso/lib/server-only/crypto/encrypt';
-import { getEnvelopeById } from '@documenso/lib/server-only/envelope/get-envelope-by-id';
+import { PDF_SIZE_A4_72PPI } from '@documenso/lib/constants/pdf';
+import { AppError, AppErrorCode } from '@documenso/lib/errors/app-error';
+import { getEnvelopeWhereInput } from '@documenso/lib/server-only/envelope/get-envelope-by-id';
+import { generateCertificatePdf } from '@documenso/lib/server-only/pdf/generate-certificate-pdf';
 import { isDocumentCompleted } from '@documenso/lib/utils/document';
-import { mapSecondaryIdToDocumentId } from '@documenso/lib/utils/envelope';
+import { prisma } from '@documenso/prisma';
+import { DocumentStatus, EnvelopeType } from '@prisma/client';
 
 import { authenticatedProcedure } from '../trpc';
 import {
@@ -19,34 +17,72 @@ export const downloadDocumentCertificateRoute = authenticatedProcedure
   .output(ZDownloadDocumentCertificateResponseSchema)
   .mutation(async ({ input, ctx }) => {
     const { teamId } = ctx;
-    const { documentId } = input;
+    const { envelopeId } = input;
 
     ctx.logger.info({
       input: {
-        documentId,
+        envelopeId,
       },
     });
 
-    const envelope = await getEnvelopeById({
+    const { envelopeWhereInput } = await getEnvelopeWhereInput({
       id: {
-        type: 'documentId',
-        id: documentId,
+        type: 'envelopeId',
+        id: envelopeId,
       },
       type: EnvelopeType.DOCUMENT,
       userId: ctx.user.id,
       teamId,
     });
 
-    if (!isDocumentCompleted(envelope.status)) {
+    const envelope = await prisma.envelope.findFirst({
+      where: envelopeWhereInput,
+      include: {
+        recipients: true,
+        fields: {
+          include: {
+            signature: true,
+          },
+        },
+        documentMeta: true,
+        user: {
+          select: {
+            email: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!envelope) {
+      throw new AppError(AppErrorCode.NOT_FOUND, {
+        message: 'Envelope not found',
+      });
+    }
+
+    // A cancelled document was never sealed/completed, so a signing certificate
+    // must not be generated for it. REJECTED and COMPLETED keep their prior behavior.
+    if (!isDocumentCompleted(envelope.status) || envelope.status === DocumentStatus.CANCELLED) {
       throw new AppError('DOCUMENT_NOT_COMPLETE');
     }
 
-    const encrypted = encryptSecondaryData({
-      data: mapSecondaryIdToDocumentId(envelope.secondaryId).toString(),
-      expiresAt: DateTime.now().plus({ minutes: 5 }).toJSDate().valueOf(),
+    const certificatePdf = await generateCertificatePdf({
+      envelope,
+      recipients: envelope.recipients,
+      fields: envelope.fields,
+      language: envelope.documentMeta.language,
+      envelopeOwner: {
+        email: envelope.user.email,
+        name: envelope.user.name || '',
+      },
+      pageWidth: PDF_SIZE_A4_72PPI.width,
+      pageHeight: PDF_SIZE_A4_72PPI.height,
     });
 
+    const result = await certificatePdf.save();
+
     return {
-      url: `${NEXT_PUBLIC_WEBAPP_URL()}/__htmltopdf/certificate?d=${encrypted}`,
+      data: Buffer.from(result).toString('base64'),
+      envelopeTitle: envelope.title,
     };
   });

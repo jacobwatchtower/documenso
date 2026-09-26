@@ -1,16 +1,3 @@
-import { Trans, useLingui } from '@lingui/react/macro';
-import {
-  ArrowRight,
-  CalendarIcon,
-  MoreVerticalIcon,
-  PlusIcon,
-  SettingsIcon,
-  TrashIcon,
-  UserIcon,
-  UsersIcon,
-} from 'lucide-react';
-import { Link } from 'react-router';
-
 import { useCurrentOrganisation } from '@documenso/lib/client-only/providers/organisation';
 import { TEAM_MEMBER_ROLE_MAP } from '@documenso/lib/constants/teams-translations';
 import { formatAvatarUrl } from '@documenso/lib/utils/avatars';
@@ -27,6 +14,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@documenso/ui/primitives/dropdown-menu';
+import { Trans, useLingui } from '@lingui/react/macro';
+import {
+  ArrowRight,
+  CalendarIcon,
+  MoreVerticalIcon,
+  PlusIcon,
+  SettingsIcon,
+  TrashIcon,
+  UserIcon,
+  UsersIcon,
+} from 'lucide-react';
+import { Link } from 'react-router';
 
 import { TeamCreateDialog } from '~/components/dialogs/team-create-dialog';
 import { TeamDeleteDialog } from '~/components/dialogs/team-delete-dialog';
@@ -40,23 +39,19 @@ export default function OrganisationSettingsTeamsPage() {
   if (organisation.teams.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center px-4 py-16">
-        <div className="bg-muted mb-6 flex h-20 w-20 items-center justify-center rounded-full">
-          <UsersIcon className="text-muted-foreground h-10 w-10" />
+        <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-muted">
+          <UsersIcon className="h-10 w-10 text-muted-foreground" />
         </div>
 
-        <h2 className="mb-2 text-xl font-semibold">
+        <h2 className="mb-2 font-semibold text-xl">
           <Trans>No teams yet</Trans>
         </h2>
 
-        {canExecuteOrganisationAction(
-          'MANAGE_ORGANISATION',
-          organisation.currentOrganisationRole,
-        ) ? (
+        {canExecuteOrganisationAction('MANAGE_ORGANISATION', organisation.currentOrganisationRole) ? (
           <>
-            <p className="text-muted-foreground mb-8 max-w-md text-center text-sm">
+            <p className="mb-8 max-w-md text-center text-muted-foreground text-sm">
               <Trans>
-                Teams help you organise your work and collaborate with others. Create your first
-                team to get started.
+                Teams help you organise your work and collaborate with others. Create your first team to get started.
               </Trans>
             </p>
 
@@ -73,21 +68,21 @@ export default function OrganisationSettingsTeamsPage() {
               <h3 className="mb-2 font-medium">
                 <Trans>What you can do with teams:</Trans>
               </h3>
-              <ul className="text-muted-foreground space-y-2 text-sm">
+              <ul className="space-y-2 text-muted-foreground text-sm">
                 <li className="flex flex-row items-center gap-2">
-                  <div className="bg-muted mt-0.5 flex h-5 w-5 items-center justify-center rounded-full font-bold">
+                  <div className="mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-muted font-bold">
                     <span className="text-xs">1</span>
                   </div>
                   <Trans>Organize your documents and templates</Trans>
                 </li>
                 <li className="flex flex-row items-center gap-2">
-                  <div className="bg-muted mt-0.5 flex h-5 w-5 items-center justify-center rounded-full font-bold">
+                  <div className="mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-muted font-bold">
                     <span className="text-xs">2</span>
                   </div>
                   <Trans>Invite team members to collaborate</Trans>
                 </li>
                 <li className="flex flex-row items-center gap-2">
-                  <div className="bg-muted mt-0.5 flex h-5 w-5 items-center justify-center rounded-full font-bold">
+                  <div className="mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-muted font-bold">
                     <span className="text-xs">3</span>
                   </div>
                   <Trans>Manage permissions and access controls</Trans>
@@ -96,10 +91,10 @@ export default function OrganisationSettingsTeamsPage() {
             </div>
           </>
         ) : (
-          <p className="text-muted-foreground mb-8 max-w-md text-center text-sm">
+          <p className="mb-8 max-w-md text-center text-muted-foreground text-sm">
             <Trans>
-              You currently have no access to any teams within this organisation. Please contact
-              your organisation to request access.
+              You currently have no access to any teams within this organisation. Please contact your organisation to
+              request access.
             </Trans>
           </p>
         )}
@@ -111,16 +106,16 @@ export default function OrganisationSettingsTeamsPage() {
     <div>
       <div className="mb-6 flex flex-row justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="font-semibold text-2xl tracking-tight">
             <Trans>{organisation.name} Teams</Trans>
           </h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+          <p className="mt-1 text-muted-foreground text-sm">
             <Trans>Select a team to view its dashboard</Trans>
           </p>
         </div>
 
         <Button asChild>
-          <Link to={`/o/${organisation.url}/settings`}>
+          <Link to={`/o/${organisation.url}/settings/general`}>
             <Trans>Manage Organisation</Trans>
           </Link>
         </Button>
@@ -129,14 +124,12 @@ export default function OrganisationSettingsTeamsPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {organisation.teams.map((team) => (
           <Link to={`/t/${team.url}`} key={team.id}>
-            <Card className="hover:bg-muted/50 border-border h-full border transition-all">
+            <Card className="h-full border border-border transition-all hover:bg-muted/50">
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
                   <Avatar className="h-10 w-10 border-2 border-solid">
-                    {team.avatarImageId && (
-                      <AvatarImage src={formatAvatarUrl(team.avatarImageId)} />
-                    )}
-                    <AvatarFallback className="text-sm text-gray-400">
+                    {team.avatarImageId && <AvatarImage src={formatAvatarUrl(team.avatarImageId)} />}
+                    <AvatarFallback className="text-gray-400 text-sm">
                       {team.name.slice(0, 1).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
@@ -145,20 +138,18 @@ export default function OrganisationSettingsTeamsPage() {
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="font-medium">{team.name}</h3>
-                        <div className="text-muted-foreground truncate text-xs">
-                          {formatTeamUrl(team.url)}
-                        </div>
+                        <div className="truncate text-muted-foreground text-xs">{formatTeamUrl(team.url)}</div>
                       </div>
 
                       <TeamDropdownMenu team={team} />
                     </div>
 
                     <div className="mt-2 flex items-center gap-4">
-                      <div className="text-muted-foreground flex items-center gap-1 text-xs">
+                      <div className="flex items-center gap-1 text-muted-foreground text-xs">
                         <CalendarIcon className="h-3 w-3" />
                         {i18n.date(team.createdAt, { dateStyle: 'short' })}
                       </div>
-                      <div className="text-muted-foreground flex items-center gap-1 text-xs">
+                      <div className="flex items-center gap-1 text-muted-foreground text-xs">
                         <UserIcon className="h-3 w-3" />
                         <span>{t(TEAM_MEMBER_ROLE_MAP[team.currentTeamRole])}</span>
                       </div>
@@ -193,7 +184,7 @@ const TeamDropdownMenu = ({ team }: { team: TGetOrganisationSessionResponse[0]['
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to={`/t/${team.url}/settings`}>
+          <Link to={`/t/${team.url}/settings/general`}>
             <SettingsIcon className="mr-2 h-4 w-4" />
             <Trans>Settings</Trans>
           </Link>

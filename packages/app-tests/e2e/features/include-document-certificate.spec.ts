@@ -1,13 +1,12 @@
-import { PDFDocument } from '@cantoo/pdf-lib';
-import { expect, test } from '@playwright/test';
-import { DocumentStatus, FieldType } from '@prisma/client';
-
 import { getDocumentByToken } from '@documenso/lib/server-only/document/get-document-by-token';
 import { getEnvelopeItemPdfUrl } from '@documenso/lib/utils/envelope-download';
 import { prisma } from '@documenso/prisma';
 import { seedPendingDocumentWithFullFields } from '@documenso/prisma/seed/documents';
 import { seedTeam } from '@documenso/prisma/seed/teams';
 import { seedUser } from '@documenso/prisma/seed/users';
+import { PDF } from '@libpdf/core';
+import { expect, test } from '@playwright/test';
+import { DocumentStatus, FieldType } from '@prisma/client';
 
 import { apiSignin } from '../fixtures/authentication';
 import { signSignaturePad } from '../fixtures/signature';
@@ -43,7 +42,7 @@ test.describe('Signing Certificate Tests', () => {
         return fetch(documentUrl).then(async (res) => await res.arrayBuffer());
       });
 
-    const originalPdf = await PDFDocument.load(documentData);
+    const originalPdf = await PDF.load(new Uint8Array(documentData));
 
     // Sign the document
     await page.goto(`/sign/${recipient.token}`);
@@ -101,14 +100,12 @@ test.describe('Signing Certificate Tests', () => {
     const completedDocumentData = new Uint8Array(pdfData);
 
     // Load the PDF and check number of pages
-    const pdfDoc = await PDFDocument.load(completedDocumentData);
+    const pdfDoc = await PDF.load(new Uint8Array(completedDocumentData));
 
     expect(pdfDoc.getPageCount()).toBe(originalPdf.getPageCount() + 1); // Original + Certificate
   });
 
-  test('team document with signing certificate enabled should include certificate', async ({
-    page,
-  }) => {
+  test('team document with signing certificate enabled should include certificate', async ({ page }) => {
     const { owner, team } = await seedTeam();
 
     const { document, recipients } = await seedPendingDocumentWithFullFields({
@@ -153,7 +150,7 @@ test.describe('Signing Certificate Tests', () => {
         return fetch(documentUrl).then(async (res) => await res.arrayBuffer());
       });
 
-    const originalPdf = await PDFDocument.load(documentData);
+    const originalPdf = await PDF.load(new Uint8Array(documentData));
 
     // Sign the document
     await page.goto(`/sign/${recipient.token}`);
@@ -206,14 +203,12 @@ test.describe('Signing Certificate Tests', () => {
     const completedDocumentData = new Uint8Array(pdfData);
 
     // Load the PDF and check number of pages
-    const completedPdf = await PDFDocument.load(completedDocumentData);
+    const completedPdf = await PDF.load(new Uint8Array(completedDocumentData));
 
     expect(completedPdf.getPageCount()).toBe(originalPdf.getPageCount() + 1); // Original + Certificate
   });
 
-  test('team document with signing certificate disabled should not include certificate', async ({
-    page,
-  }) => {
+  test('team document with signing certificate disabled should not include certificate', async ({ page }) => {
     const { owner, team } = await seedTeam();
 
     const { document, recipients } = await seedPendingDocumentWithFullFields({
@@ -258,7 +253,7 @@ test.describe('Signing Certificate Tests', () => {
         return fetch(documentUrl).then(async (res) => await res.arrayBuffer());
       });
 
-    const originalPdf = await PDFDocument.load(new Uint8Array(documentData));
+    const originalPdf = await PDF.load(new Uint8Array(documentData));
 
     // Sign the document
     await page.goto(`/sign/${recipient.token}`);
@@ -304,12 +299,10 @@ test.describe('Signing Certificate Tests', () => {
       version: 'signed',
     });
 
-    const completedDocumentData = await fetch(documentUrl).then(
-      async (res) => await res.arrayBuffer(),
-    );
+    const completedDocumentData = await fetch(documentUrl).then(async (res) => await res.arrayBuffer());
 
     // Load the PDF and check number of pages
-    const completedPdf = await PDFDocument.load(completedDocumentData);
+    const completedPdf = await PDF.load(new Uint8Array(completedDocumentData));
 
     expect(completedPdf.getPageCount()).toBe(originalPdf.getPageCount());
   });
@@ -320,23 +313,14 @@ test.describe('Signing Certificate Tests', () => {
     await apiSignin({
       page,
       email: owner.email,
-      redirectPath: `/t/${team.url}/settings/document`,
+      redirectPath: `/t/${team.url}/settings/certificates`,
     });
 
-    await page
-      .getByRole('group')
-      .locator('div')
-      .filter({ hasText: 'Include the Signing' })
-      .getByRole('combobox')
-      .click();
+    await page.getByTestId('include-signing-certificate-trigger').click();
     await page.getByRole('option', { name: 'No' }).click();
 
-    await page
-      .getByRole('button', { name: /Update/ })
-      .first()
-      .click();
-
-    await page.waitForTimeout(1000);
+    await page.getByRole('button', { name: 'Save changes' }).first().click();
+    await expect(page.getByText('Your certificate preferences have been updated').first()).toBeVisible();
 
     // Verify the setting was saved
     const updatedTeam = await prisma.team.findFirstOrThrow({
@@ -347,26 +331,21 @@ test.describe('Signing Certificate Tests', () => {
     expect(updatedTeam.teamGlobalSettings?.includeSigningCertificate).toBe(false);
 
     // Toggle the setting back to true
-    await page
-      .getByRole('group')
-      .locator('div')
-      .filter({ hasText: 'Include the Signing' })
-      .getByRole('combobox')
-      .click();
+    await page.getByTestId('include-signing-certificate-trigger').click();
     await page.getByRole('option', { name: 'Yes' }).click();
-    await page
-      .getByRole('button', { name: /Update/ })
-      .first()
-      .click();
+    await page.getByRole('button', { name: 'Save changes' }).first().click();
 
-    await page.waitForTimeout(1000);
+    // The toast from the first save may still be visible, so poll the database
+    // for the saved value instead of waiting on UI signals.
+    await expect
+      .poll(async () => {
+        const updatedTeam = await prisma.team.findFirstOrThrow({
+          where: { id: team.id },
+          include: { teamGlobalSettings: true },
+        });
 
-    // Verify the setting was saved
-    const updatedTeam2 = await prisma.team.findFirstOrThrow({
-      where: { id: team.id },
-      include: { teamGlobalSettings: true },
-    });
-
-    expect(updatedTeam2.teamGlobalSettings?.includeSigningCertificate).toBe(true);
+        return updatedTeam.teamGlobalSettings?.includeSigningCertificate;
+      })
+      .toBe(true);
   });
 });

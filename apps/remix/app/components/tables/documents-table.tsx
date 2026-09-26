@@ -1,22 +1,22 @@
-import { useMemo, useTransition } from 'react';
-
-import { msg } from '@lingui/core/macro';
-import { useLingui } from '@lingui/react';
-import { Loader } from 'lucide-react';
-import { DateTime } from 'luxon';
-import { Link } from 'react-router';
-import { match } from 'ts-pattern';
-
 import { useUpdateSearchParams } from '@documenso/lib/client-only/hooks/use-update-search-params';
 import { useSession } from '@documenso/lib/client-only/providers/session';
 import { isDocumentCompleted } from '@documenso/lib/utils/document';
+import { findRecipientByEmail } from '@documenso/lib/utils/recipients';
 import { formatDocumentsPath } from '@documenso/lib/utils/teams';
 import type { TFindDocumentsResponse } from '@documenso/trpc/server/document-router/find-documents.types';
-import type { DataTableColumnDef } from '@documenso/ui/primitives/data-table';
+import { Checkbox } from '@documenso/ui/primitives/checkbox';
+import type { DataTableColumnDef, RowSelectionState } from '@documenso/ui/primitives/data-table';
 import { DataTable } from '@documenso/ui/primitives/data-table';
 import { DataTablePagination } from '@documenso/ui/primitives/data-table-pagination';
 import { Skeleton } from '@documenso/ui/primitives/skeleton';
 import { TableCell } from '@documenso/ui/primitives/table';
+import { msg } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react';
+import { Loader } from 'lucide-react';
+import { DateTime } from 'luxon';
+import { useMemo, useTransition } from 'react';
+import { Link } from 'react-router';
+import { match } from 'ts-pattern';
 
 import { DocumentStatus } from '~/components/general/document/document-status';
 import { useCurrentTeam } from '~/providers/team';
@@ -29,7 +29,10 @@ export type DocumentsTableProps = {
   data?: TFindDocumentsResponse;
   isLoading?: boolean;
   isLoadingError?: boolean;
-  onMoveDocument?: (documentId: number) => void;
+  onMoveDocument?: (envelopeId: string) => void;
+  enableSelection?: boolean;
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: (selection: RowSelectionState) => void;
 };
 
 type DocumentsTableRow = TFindDocumentsResponse['data'][number];
@@ -39,6 +42,9 @@ export const DocumentsTable = ({
   isLoading,
   isLoadingError,
   onMoveDocument,
+  enableSelection,
+  rowSelection,
+  onRowSelectionChange,
 }: DocumentsTableProps) => {
   const { _, i18n } = useLingui();
 
@@ -48,16 +54,42 @@ export const DocumentsTable = ({
   const updateSearchParams = useUpdateSearchParams();
 
   const columns = useMemo(() => {
-    return [
+    const cols: DataTableColumnDef<DocumentsTableRow>[] = [];
+
+    if (enableSelection) {
+      cols.push({
+        id: 'select',
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected()}
+            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+            aria-label={_(msg`Select all`)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label={_(msg`Select row`)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+        size: 40,
+      });
+    }
+
+    cols.push(
       {
         header: _(msg`Created`),
         accessorKey: 'createdAt',
-        cell: ({ row }) =>
-          i18n.date(row.original.createdAt, { ...DateTime.DATETIME_SHORT, hourCycle: 'h12' }),
+        cell: ({ row }) => i18n.date(row.original.createdAt, { ...DateTime.DATETIME_SHORT, hourCycle: 'h12' }),
       },
       {
         header: _(msg`Title`),
-        cell: ({ row }) => <DataTableTitle row={row.original} teamUrl={team?.url} />,
+        cell: ({ row }) => <DataTableTitle row={row.original} teamUrl={team?.url} teamEmail={team?.teamEmail?.email} />,
       },
       {
         id: 'sender',
@@ -68,10 +100,7 @@ export const DocumentsTable = ({
         header: _(msg`Recipient`),
         accessorKey: 'recipient',
         cell: ({ row }) => (
-          <StackAvatarsWithTooltip
-            recipients={row.original.recipients}
-            documentStatus={row.original.status}
-          />
+          <StackAvatarsWithTooltip recipients={row.original.recipients} documentStatus={row.original.status} />
         ),
       },
       {
@@ -88,13 +117,15 @@ export const DocumentsTable = ({
               <DocumentsTableActionButton row={row.original} />
               <DocumentsTableActionDropdown
                 row={row.original}
-                onMoveDocument={onMoveDocument ? () => onMoveDocument(row.original.id) : undefined}
+                onMoveDocument={onMoveDocument ? () => onMoveDocument(row.original.envelopeId) : undefined}
               />
             </div>
           ),
       },
-    ] satisfies DataTableColumnDef<DocumentsTableRow>[];
-  }, [team, onMoveDocument]);
+    );
+
+    return cols;
+  }, [team, onMoveDocument, enableSelection]);
 
   const onPaginationChange = (page: number, perPage: number) => {
     startTransition(() => {
@@ -132,6 +163,11 @@ export const DocumentsTable = ({
           rows: 5,
           component: (
             <>
+              {enableSelection && (
+                <TableCell>
+                  <Skeleton className="h-4 w-4 rounded" />
+                </TableCell>
+              )}
               <TableCell>
                 <Skeleton className="h-4 w-40 rounded-full" />
               </TableCell>
@@ -152,13 +188,17 @@ export const DocumentsTable = ({
             </>
           ),
         }}
+        enableRowSelection={enableSelection}
+        rowSelection={rowSelection}
+        onRowSelectionChange={onRowSelectionChange}
+        getRowId={(row) => row.envelopeId}
       >
         {(table) => <DataTablePagination additionalInformation="VisibleCount" table={table} />}
       </DataTable>
 
       {isPending && (
-        <div className="bg-background/50 absolute inset-0 flex items-center justify-center">
-          <Loader className="text-muted-foreground h-8 w-8 animate-spin" />
+        <div className="absolute inset-0 flex items-center justify-center bg-background/50">
+          <Loader className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       )}
     </div>
@@ -168,12 +208,17 @@ export const DocumentsTable = ({
 type DataTableTitleProps = {
   row: DocumentsTableRow;
   teamUrl: string;
+  teamEmail?: string;
 };
 
-const DataTableTitle = ({ row, teamUrl }: DataTableTitleProps) => {
+const DataTableTitle = ({ row, teamUrl, teamEmail }: DataTableTitleProps) => {
   const { user } = useSession();
 
-  const recipient = row.recipients.find((recipient) => recipient.email === user.email);
+  const recipient = findRecipientByEmail({
+    recipients: row.recipients,
+    userEmail: user.email,
+    teamEmail,
+  });
 
   const isOwner = row.user.id === user.id;
   const isRecipient = !!recipient;
@@ -206,8 +251,6 @@ const DataTableTitle = ({ row, teamUrl }: DataTableTitleProps) => {
       </Link>
     ))
     .otherwise(() => (
-      <span className="block max-w-[10rem] truncate font-medium hover:underline md:max-w-[20rem]">
-        {row.title}
-      </span>
+      <span className="block max-w-[10rem] truncate font-medium hover:underline md:max-w-[20rem]">{row.title}</span>
     ));
 };

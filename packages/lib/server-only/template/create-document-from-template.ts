@@ -1,3 +1,5 @@
+import { nanoid, prefixedId } from '@documenso/lib/universal/id';
+import { prisma } from '@documenso/prisma';
 import type { DocumentDistributionMethod, DocumentSigningOrder } from '@prisma/client';
 import {
   DocumentSource,
@@ -13,15 +15,15 @@ import {
 import { DateTime } from 'luxon';
 import { match } from 'ts-pattern';
 
-import { nanoid, prefixedId } from '@documenso/lib/universal/id';
-import { prisma } from '@documenso/prisma';
-
 import { DEFAULT_DOCUMENT_DATE_FORMAT } from '../../constants/date-formats';
+import type { TEnvelopeExpirationPeriod } from '../../constants/envelope-expiration';
 import type { SupportedLanguageCodes } from '../../constants/i18n';
 import { AppError, AppErrorCode } from '../../errors/app-error';
+import { ZDefaultRecipientsSchema } from '../../types/default-recipients';
 import { DOCUMENT_AUDIT_LOG_TYPE } from '../../types/document-audit-logs';
 import { ZRecipientAuthOptionsSchema } from '../../types/document-auth';
 import type { TDocumentEmailSettings } from '../../types/document-email';
+import type { TDocumentFormValues } from '../../types/document-form-values';
 import type {
   TCheckboxFieldMeta,
   TDropdownFieldMeta,
@@ -30,19 +32,12 @@ import type {
   TRadioFieldMeta,
   TTextFieldMeta,
 } from '../../types/field-meta';
-import {
-  ZCheckboxFieldMeta,
-  ZDropdownFieldMeta,
-  ZFieldMetaSchema,
-  ZRadioFieldMeta,
-} from '../../types/field-meta';
-import {
-  ZWebhookDocumentSchema,
-  mapEnvelopeToWebhookDocumentPayload,
-} from '../../types/webhook-payload';
+import { ZCheckboxFieldMeta, ZDropdownFieldMeta, ZFieldMetaSchema, ZRadioFieldMeta } from '../../types/field-meta';
+import { ZSignatureLevelSchema } from '../../types/signature-level';
+import { mapEnvelopeToWebhookDocumentPayload, ZWebhookDocumentSchema } from '../../types/webhook-payload';
 import type { ApiRequestMetadata } from '../../universal/extract-request-metadata';
 import { getFileServerSide } from '../../universal/upload/get-file.server';
-import { putPdfFileServerSide } from '../../universal/upload/put-file.server';
+import { putNormalizedPdfFileServerSide } from '../../universal/upload/put-file.server';
 import { extractDerivedDocumentMeta } from '../../utils/document';
 import { createDocumentAuditLogData } from '../../utils/document-audit-logs';
 import {
@@ -55,13 +50,14 @@ import { mapSecondaryIdToTemplateId } from '../../utils/envelope';
 import { buildTeamWhereQuery } from '../../utils/teams';
 import { getEnvelopeWhereInput } from '../envelope/get-envelope-by-id';
 import { incrementDocumentId } from '../envelope/increment-id';
+import { insertFormValuesInPdf } from '../pdf/insert-form-values-in-pdf';
+import { assertOrganisationRatesAndLimits } from '../rate-limit/assert-organisation-rates-and-limits';
+import { resolveSignatureLevel } from '../signature-level/resolve-signature-level';
 import { getTeamSettings } from '../team/get-team-settings';
 import { triggerWebhook } from '../webhooks/trigger/trigger-webhook';
+import { getOrganisationTemplateWhereInput } from './get-organisation-template-by-id';
 
-type FinalRecipient = Pick<
-  Recipient,
-  'name' | 'email' | 'role' | 'authOptions' | 'signingOrder' | 'token'
-> & {
+type FinalRecipient = Pick<Recipient, 'name' | 'email' | 'role' | 'authOptions' | 'signingOrder' | 'token'> & {
   templateRecipientId: number;
   fields: Field[];
 };
@@ -116,7 +112,10 @@ export type CreateDocumentFromTemplateOptions = {
     typedSignatureEnabled?: boolean;
     uploadSignatureEnabled?: boolean;
     drawSignatureEnabled?: boolean;
+    envelopeExpirationPeriod?: TEnvelopeExpirationPeriod | null;
   };
+
+  formValues?: TDocumentFormValues;
   requestMetadata: ApiRequestMetadata;
 };
 
@@ -303,30 +302,45 @@ export const createDocumentFromTemplate = async ({
   folderId,
   prefillFields,
   attachments,
+  formValues,
 }: CreateDocumentFromTemplateOptions) => {
-  const { envelopeWhereInput } = await getEnvelopeWhereInput({
+  const templateInclude = {
+    recipients: {
+      include: {
+        fields: true,
+      },
+    },
+    envelopeItems: {
+      include: {
+        documentData: true,
+      },
+    },
+    documentMeta: true,
+  } as const;
+
+  const { envelopeWhereInput, team: callerTeam } = await getEnvelopeWhereInput({
     id,
     type: EnvelopeType.TEMPLATE,
     userId,
     teamId,
   });
 
-  const template = await prisma.envelope.findUnique({
-    where: envelopeWhereInput,
-    include: {
-      recipients: {
-        include: {
-          fields: true,
-        },
-      },
-      envelopeItems: {
-        include: {
-          documentData: true,
-        },
-      },
-      documentMeta: true,
-    },
-  });
+  const [teamTemplate, organisationTemplate] = await Promise.all([
+    prisma.envelope.findFirst({
+      where: envelopeWhereInput,
+      include: templateInclude,
+    }),
+    prisma.envelope.findFirst({
+      where: getOrganisationTemplateWhereInput({
+        id,
+        organisationId: callerTeam.organisationId,
+        teamRole: callerTeam.currentTeamRole,
+      }),
+      include: templateInclude,
+    }),
+  ]);
+
+  const template = teamTemplate ?? organisationTemplate;
 
   if (!template) {
     throw new AppError(AppErrorCode.NOT_FOUND, {
@@ -366,9 +380,7 @@ export const createDocumentFromTemplate = async ({
 
   // Check that all the passed in recipient IDs can be associated with a template recipient.
   recipients.forEach((recipient) => {
-    const foundRecipient = template.recipients.find(
-      (templateRecipient) => templateRecipient.id === recipient.id,
-    );
+    const foundRecipient = template.recipients.find((templateRecipient) => templateRecipient.id === recipient.id);
 
     if (!foundRecipient) {
       throw new AppError(AppErrorCode.INVALID_BODY, {
@@ -395,6 +407,30 @@ export const createDocumentFromTemplate = async ({
       token: nanoid(),
     };
   });
+
+  const defaultRecipients = settings.defaultRecipients
+    ? ZDefaultRecipientsSchema.parse(settings.defaultRecipients)
+    : [];
+
+  const defaultRecipientsFinal: FinalRecipient[] = defaultRecipients.map((recipient) => {
+    const authOptions = ZRecipientAuthOptionsSchema.parse({});
+
+    return {
+      templateRecipientId: -1,
+      fields: [],
+      name: recipient.name || recipient.email,
+      email: recipient.email,
+      role: recipient.role,
+      signingOrder: null,
+      authOptions: createRecipientAuthOptions({
+        accessAuth: authOptions.accessAuth,
+        actionAuth: authOptions.actionAuth,
+      }),
+      token: nanoid(),
+    };
+  });
+
+  const allFinalRecipients = [...finalRecipients, ...defaultRecipientsFinal];
 
   // Key = original envelope item ID
   // Value = duplicated envelope item ID.
@@ -431,11 +467,19 @@ export const createDocumentFromTemplate = async ({
         });
       }
 
-      const buffer = await getFileServerSide(documentDataToDuplicate);
+      let buffer = await getFileServerSide(documentDataToDuplicate);
 
       const titleToUse = item.title || finalEnvelopeTitle;
 
-      const duplicatedFile = await putPdfFileServerSide({
+      if (formValues) {
+        // eslint-disable-next-line require-atomic-updates
+        buffer = await insertFormValuesInPdf({
+          pdf: Buffer.from(buffer),
+          formValues,
+        });
+      }
+
+      const duplicatedFile = await putNormalizedPdfFileServerSide({
         name: titleToUse,
         type: 'application/pdf',
         arrayBuffer: async () => Promise.resolve(buffer),
@@ -445,7 +489,7 @@ export const createDocumentFromTemplate = async ({
         data: {
           type: duplicatedFile.type,
           data: duplicatedFile.data,
-          initialData: duplicatedFile.initialData,
+          initialData: documentDataToDuplicate.data,
         },
       });
 
@@ -462,44 +506,62 @@ export const createDocumentFromTemplate = async ({
     }),
   );
 
-  const incrementedDocumentId = await incrementDocumentId();
-
-  const documentMeta = await prisma.documentMeta.create({
-    data: extractDerivedDocumentMeta(settings, {
-      subject: override?.subject || template.documentMeta?.subject,
-      message: override?.message || template.documentMeta?.message,
-      timezone: override?.timezone || template.documentMeta?.timezone,
-      dateFormat: override?.dateFormat || template.documentMeta?.dateFormat,
-      redirectUrl: override?.redirectUrl || template.documentMeta?.redirectUrl,
-      distributionMethod: override?.distributionMethod || template.documentMeta?.distributionMethod,
-      emailSettings: override?.emailSettings || template.documentMeta?.emailSettings,
-      signingOrder: override?.signingOrder || template.documentMeta?.signingOrder,
-      language: override?.language || template.documentMeta?.language || settings.documentLanguage,
-      typedSignatureEnabled:
-        override?.typedSignatureEnabled ?? template.documentMeta?.typedSignatureEnabled,
-      uploadSignatureEnabled:
-        override?.uploadSignatureEnabled ?? template.documentMeta?.uploadSignatureEnabled,
-      drawSignatureEnabled:
-        override?.drawSignatureEnabled ?? template.documentMeta?.drawSignatureEnabled,
-      allowDictateNextSigner:
-        override?.allowDictateNextSigner ?? template.documentMeta?.allowDictateNextSigner,
-    }),
+  // Enforce the organisation document-creation limit before creating the document.
+  await assertOrganisationRatesAndLimits({
+    organisationId: callerTeam.organisationId,
+    type: 'document',
+    count: 1,
   });
 
-  return await prisma.$transaction(async (tx) => {
+  const incrementedDocumentId = await incrementDocumentId();
+
+  // Carry the template's level forward, coercing if the instance mode has
+  // changed since the template was created. ZSignatureLevelSchema parses the
+  // free-form TEXT column defensively. Resolved before meta extraction so
+  // signingOrder picks up the TSP-appropriate default + assertion.
+  const signatureLevel = resolveSignatureLevel({
+    requested: ZSignatureLevelSchema.parse(template.signatureLevel),
+    strict: false,
+  });
+
+  const documentMeta = await prisma.documentMeta.create({
+    data: extractDerivedDocumentMeta(
+      settings,
+      {
+        subject: override?.subject || template.documentMeta?.subject,
+        message: override?.message || template.documentMeta?.message,
+        timezone: override?.timezone || template.documentMeta?.timezone,
+        dateFormat: override?.dateFormat || template.documentMeta?.dateFormat,
+        redirectUrl: override?.redirectUrl || template.documentMeta?.redirectUrl,
+        distributionMethod: override?.distributionMethod || template.documentMeta?.distributionMethod,
+        emailSettings: override?.emailSettings || template.documentMeta?.emailSettings,
+        signingOrder: override?.signingOrder || template.documentMeta?.signingOrder,
+        language: override?.language || template.documentMeta?.language || settings.documentLanguage,
+        typedSignatureEnabled: override?.typedSignatureEnabled ?? template.documentMeta?.typedSignatureEnabled,
+        uploadSignatureEnabled: override?.uploadSignatureEnabled ?? template.documentMeta?.uploadSignatureEnabled,
+        drawSignatureEnabled: override?.drawSignatureEnabled ?? template.documentMeta?.drawSignatureEnabled,
+        allowDictateNextSigner: override?.allowDictateNextSigner ?? template.documentMeta?.allowDictateNextSigner,
+        envelopeExpirationPeriod: override?.envelopeExpirationPeriod ?? template.documentMeta?.envelopeExpirationPeriod,
+      },
+      signatureLevel,
+    ),
+  });
+
+  const { envelope, createdEnvelope } = await prisma.$transaction(async (tx) => {
     const envelope = await tx.envelope.create({
       data: {
         id: prefixedId('envelope'),
         secondaryId: incrementedDocumentId.formattedDocumentId,
         type: EnvelopeType.DOCUMENT,
         internalVersion: template.internalVersion,
+        signatureLevel,
         qrToken: prefixedId('qr'),
         source: DocumentSource.TEMPLATE,
         externalId: externalId || template.externalId,
         templateId: legacyTemplateId, // The template this envelope was created from.
         userId,
         folderId,
-        teamId: template.teamId,
+        teamId,
         title: finalEnvelopeTitle,
         envelopeItems: {
           createMany: {
@@ -513,9 +575,10 @@ export const createDocumentFromTemplate = async ({
         visibility: template.visibility || settings.documentVisibility,
         useLegacyFieldInsertion: template.useLegacyFieldInsertion ?? false,
         documentMetaId: documentMeta.id,
+        formValues: formValues ?? undefined,
         recipients: {
           createMany: {
-            data: finalRecipients.map((recipient) => {
+            data: allFinalRecipients.map((recipient) => {
               const authOptions = ZRecipientAuthOptionsSchema.parse(recipient?.authOptions);
 
               return {
@@ -526,12 +589,8 @@ export const createDocumentFromTemplate = async ({
                   accessAuth: authOptions.accessAuth,
                   actionAuth: authOptions.actionAuth,
                 }),
-                sendStatus:
-                  recipient.role === RecipientRole.CC ? SendStatus.SENT : SendStatus.NOT_SENT,
-                signingStatus:
-                  recipient.role === RecipientRole.CC
-                    ? SigningStatus.SIGNED
-                    : SigningStatus.NOT_SIGNED,
+                sendStatus: recipient.role === RecipientRole.CC ? SendStatus.SENT : SendStatus.NOT_SENT,
+                signingStatus: recipient.role === RecipientRole.CC ? SigningStatus.SIGNED : SigningStatus.NOT_SIGNED,
                 signingOrder: recipient.signingOrder,
                 token: recipient.token,
               };
@@ -556,9 +615,7 @@ export const createDocumentFromTemplate = async ({
     let fieldsToCreate: Omit<Field, 'id' | 'secondaryId'>[] = [];
 
     // Get all template field IDs first so we can validate later
-    const allTemplateFieldIds = finalRecipients.flatMap((recipient) =>
-      recipient.fields.map((field) => field.id),
-    );
+    const allTemplateFieldIds = finalRecipients.flatMap((recipient) => recipient.fields.map((field) => field.id));
 
     if (prefillFields?.length) {
       // Validate that all prefill field IDs exist in the template
@@ -596,7 +653,7 @@ export const createDocumentFromTemplate = async ({
       }
     }
 
-    Object.values(finalRecipients).forEach(({ token, fields }) => {
+    Object.values(allFinalRecipients).forEach(({ token, fields }) => {
       const recipient = envelope.recipients.find((recipient) => recipient.token === token);
 
       if (!recipient) {
@@ -718,13 +775,25 @@ export const createDocumentFromTemplate = async ({
       throw new Error('Document not found');
     }
 
-    await triggerWebhook({
+    return { envelope, createdEnvelope };
+  });
+
+  // Trigger webhook outside the transaction to avoid holding the connection
+  // open during network I/O.
+  await Promise.allSettled([
+    triggerWebhook({
       event: WebhookTriggerEvents.DOCUMENT_CREATED,
       data: ZWebhookDocumentSchema.parse(mapEnvelopeToWebhookDocumentPayload(createdEnvelope)),
       userId,
       teamId,
-    });
+    }),
+    triggerWebhook({
+      event: WebhookTriggerEvents.TEMPLATE_USED,
+      data: ZWebhookDocumentSchema.parse(mapEnvelopeToWebhookDocumentPayload(createdEnvelope)),
+      userId,
+      teamId,
+    }),
+  ]);
 
-    return envelope;
-  });
+  return envelope;
 };

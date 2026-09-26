@@ -1,18 +1,20 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
-
-import { SigningStatus } from '@prisma/client';
-import { useRevalidator } from 'react-router';
-
 import { getOptionalSession } from '@documenso/auth/server/lib/utils/get-session';
+import { captureServerEvent } from '@documenso/lib/server-only/analytics/capture-server-event';
 import { getDocumentAndSenderByToken } from '@documenso/lib/server-only/document/get-document-by-token';
 import { getOrganisationClaimByTeamId } from '@documenso/lib/server-only/organisation/get-organisation-claims';
 import { getRecipientByToken } from '@documenso/lib/server-only/recipient/get-recipient-by-token';
+import { ZSignDocumentEmbedDataSchema } from '@documenso/lib/types/embed-document-sign-schema';
+import { fireAndForget } from '@documenso/lib/universal/fire-and-forget';
+import { prisma } from '@documenso/prisma';
+import { Trans } from '@lingui/react/macro';
+import { SigningStatus } from '@prisma/client';
+import { useEffect, useLayoutEffect, useState } from 'react';
+import { useRevalidator } from 'react-router';
 
 import { BrandingLogo } from '~/components/general/branding-logo';
 import { DocumentSigningAuthProvider } from '~/components/general/document-signing/document-signing-auth-provider';
 import { DocumentSigningProvider } from '~/components/general/document-signing/document-signing-provider';
 import { DocumentSigningRecipientProvider } from '~/components/general/document-signing/document-signing-recipient-provider';
-import { ZSignDocumentEmbedDataSchema } from '~/types/embed-document-sign-schema';
 import { injectCss } from '~/utils/css-vars';
 import { superLoaderJson, useSuperLoaderData } from '~/utils/super-json-loader';
 
@@ -43,6 +45,15 @@ export async function loader({ request }: Route.LoaderArgs) {
   const firstDocument = envelopes[0]?.document;
 
   if (!firstDocument) {
+    captureServerEvent({
+      event: 'App: Embed Session Started',
+      userId: user?.id,
+      properties: {
+        type: 'signing',
+        version: 'v1',
+      },
+    });
+
     return superLoaderJson({
       envelopes,
       user,
@@ -56,6 +67,29 @@ export async function loader({ request }: Route.LoaderArgs) {
   const allowWhitelabelling = organisationClaim.flags.embedSigningWhiteLabel;
   const hidePoweredBy = organisationClaim.flags.hidePoweredBy;
 
+  fireAndForget(async () => {
+    const team = await prisma.team.findFirst({
+      where: {
+        id: firstDocument.teamId,
+      },
+      select: {
+        organisationId: true,
+      },
+    });
+
+    captureServerEvent({
+      event: 'App: Embed Session Started',
+      userId: user?.id,
+      organisationId: team?.organisationId,
+      teamId: firstDocument.teamId,
+      properties: {
+        type: 'signing',
+        version: 'v1',
+        envelopeId: firstDocument.envelopeId,
+      },
+    });
+  });
+
   return superLoaderJson({
     envelopes,
     user,
@@ -65,27 +99,21 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function MultisignPage() {
-  const { envelopes, user, hidePoweredBy, allowWhitelabelling } =
-    useSuperLoaderData<typeof loader>();
+  const { envelopes, user, hidePoweredBy, allowWhitelabelling } = useSuperLoaderData<typeof loader>();
 
   const revalidator = useRevalidator();
 
-  const [selectedDocument, setSelectedDocument] = useState<
-    (typeof envelopes)[number]['document'] | null
-  >(null);
+  const [selectedDocument, setSelectedDocument] = useState<(typeof envelopes)[number]['document'] | null>(null);
 
   // Additional state for embed functionality
   const [hasFinishedInit, setHasFinishedInit] = useState(false);
   const [isNameLocked, setIsNameLocked] = useState(false);
   const [allowDocumentRejection, setAllowDocumentRejection] = useState(false);
-  const [showOtherRecipientsCompletedFields, setShowOtherRecipientsCompletedFields] =
-    useState(false);
+  const [showOtherRecipientsCompletedFields, setShowOtherRecipientsCompletedFields] = useState(false);
   const [embedFullName, setEmbedFullName] = useState('');
 
   // Check if all documents are completed
-  const isCompleted = envelopes.every(
-    (envelope) => envelope.recipient.signingStatus === SigningStatus.SIGNED,
-  );
+  const isCompleted = envelopes.every((envelope) => envelope.recipient.signingStatus === SigningStatus.SIGNED);
 
   const selectedRecipient = selectedDocument
     ? envelopes.find((e) => e.document.id === selectedDocument.id)?.recipient
@@ -101,11 +129,7 @@ export default function MultisignPage() {
     void revalidator.revalidate();
   };
 
-  const onDocumentCompleted = (data: {
-    token: string;
-    documentId: number;
-    recipientId: number;
-  }) => {
+  const onDocumentCompleted = (data: { token: string; documentId: number; recipientId: number }) => {
     // Send postMessage for individual document completion
     if (window.parent) {
       window.parent.postMessage(
@@ -122,12 +146,7 @@ export default function MultisignPage() {
     }
   };
 
-  const onDocumentRejected = (data: {
-    token: string;
-    documentId: number;
-    recipientId: number;
-    reason: string;
-  }) => {
+  const onDocumentRejected = (data: { token: string; documentId: number; recipientId: number; reason: string }) => {
     // Send postMessage for document rejection
     if (window.parent) {
       window.parent.postMessage(
@@ -183,9 +202,7 @@ export default function MultisignPage() {
               documentId: envelope.document.id,
               recipientId: envelope.recipient.id,
               action:
-                envelope.recipient.signingStatus === SigningStatus.SIGNED
-                  ? 'document-completed'
-                  : 'document-rejected',
+                envelope.recipient.signingStatus === SigningStatus.SIGNED ? 'document-completed' : 'document-rejected',
               reason:
                 envelope.recipient.signingStatus === SigningStatus.REJECTED
                   ? envelope.recipient.rejectionReason
@@ -199,9 +216,7 @@ export default function MultisignPage() {
   };
 
   useEffect(() => {
-    if (
-      envelopes.every((envelope) => envelope.recipient.signingStatus !== SigningStatus.NOT_SIGNED)
-    ) {
+    if (envelopes.every((envelope) => envelope.recipient.signingStatus !== SigningStatus.NOT_SIGNED)) {
       onAllDocumentsCompleted();
     }
   }, [envelopes]);
@@ -247,9 +262,7 @@ export default function MultisignPage() {
   if (selectedDocument && selectedRecipient) {
     // Determine the full name to use - prioritize embed data, then user name, then recipient name
     const fullNameToUse =
-      embedFullName ||
-      (user?.email === selectedRecipient.email ? user?.name : selectedRecipient.name) ||
-      '';
+      embedFullName || (user?.email === selectedRecipient.email ? user?.name : selectedRecipient.name) || '';
 
     return (
       <div className="p-4">
@@ -282,8 +295,10 @@ export default function MultisignPage() {
         </DocumentSigningProvider>
 
         {!hidePoweredBy && (
-          <div className="bg-primary text-primary-foreground fixed bottom-0 left-0 z-40 rounded-tr px-2 py-1 text-xs font-medium opacity-60 hover:opacity-100">
-            <span>Powered by</span>
+          <div className="fixed bottom-0 left-0 z-40 rounded-tr bg-primary px-2 py-1 font-medium text-primary-foreground text-xs opacity-60 hover:opacity-100">
+            <span>
+              <Trans>Powered by</Trans>
+            </span>
             <BrandingLogo className="ml-2 inline-block h-[14px]" />
           </div>
         )}
@@ -297,8 +312,10 @@ export default function MultisignPage() {
       <MultiSignDocumentList envelopes={envelopes} onDocumentSelect={onSelectDocument} />
 
       {!hidePoweredBy && (
-        <div className="bg-primary text-primary-foreground fixed bottom-0 left-0 z-40 rounded-tr px-2 py-1 text-xs font-medium opacity-60 hover:opacity-100">
-          <span>Powered by</span>
+        <div className="fixed bottom-0 left-0 z-40 rounded-tr bg-primary px-2 py-1 font-medium text-primary-foreground text-xs opacity-60 hover:opacity-100">
+          <span>
+            <Trans>Powered by</Trans>
+          </span>
           <BrandingLogo className="ml-2 inline-block h-[14px]" />
         </div>
       )}

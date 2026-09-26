@@ -41,7 +41,7 @@ export default defineConfig({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
-    baseURL: 'http://localhost:3000',
+    baseURL: process.env.NEXT_PUBLIC_WEBAPP_URL || 'http://localhost:3000',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'retain-on-failure',
@@ -83,10 +83,21 @@ export default defineConfig({
       testMatch: /e2e\/api\/.*\.spec\.ts/,
       workers: 10, // Limited by DB connections before it gets flakey.
     },
-    // Run UI Tests
+    // License tests that share a single license file - must run serially
+    {
+      name: 'license',
+      testMatch: /e2e\/license\/.*\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1920, height: 1200 },
+      },
+      workers: 1, // Must run serially since they share a license file
+    },
+    // Run UI Tests (excluding license tests which have their own project)
     {
       name: 'ui',
       testMatch: /e2e\/(?!api\/).*\.spec\.ts/,
+      testIgnore: /e2e\/license\/.*\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1920, height: 1200 },

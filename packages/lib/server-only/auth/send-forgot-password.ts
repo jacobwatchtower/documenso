@@ -1,10 +1,8 @@
-import { createElement } from 'react';
-
-import { msg } from '@lingui/core/macro';
-
 import { mailer } from '@documenso/email/mailer';
 import { ForgotPasswordTemplate } from '@documenso/email/templates/forgot-password';
 import { prisma } from '@documenso/prisma';
+import { msg } from '@lingui/core/macro';
+import { createElement } from 'react';
 
 import { getI18nInstance } from '../../client-only/providers/i18n-server';
 import { NEXT_PUBLIC_WEBAPP_URL } from '../../constants/app';
@@ -39,9 +37,12 @@ export const sendForgotPassword = async ({ userId }: SendForgotPasswordOptions) 
 
   console.log('[SEND_FORGOT_PASSWORD] User found:', user.email);
 
-  const token = user.passwordResetTokens[0].token;
+  const token = user.passwordResetTokens[0]?.token;
+  if (!token) {
+    throw new Error('Password reset token not found for user');
+  }
   const assetBaseUrl = NEXT_PUBLIC_WEBAPP_URL() || 'http://localhost:3000';
-  const resetPasswordLink = `${NEXT_PUBLIC_WEBAPP_URL()}/reset-password/${token}`;
+  const resetPasswordLink = `${assetBaseUrl}/reset-password/${token}`;
 
   console.log('[SEND_FORGOT_PASSWORD] Reset link:', resetPasswordLink);
 

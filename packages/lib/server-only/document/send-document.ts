@@ -1,4 +1,11 @@
-import type { DocumentData, Envelope, EnvelopeItem, Field } from '@prisma/client';
+import { materializeTspAnchorsForEnvelope } from '@documenso/ee/server-only/signing/csc/materialize-anchors';
+import { resolveExpiresAt } from '@documenso/lib/constants/envelope-expiration';
+import { DOCUMENT_AUDIT_LOG_TYPE } from '@documenso/lib/types/document-audit-logs';
+import type { ApiRequestMetadata } from '@documenso/lib/universal/extract-request-metadata';
+import { createDocumentAuditLogData } from '@documenso/lib/utils/document-audit-logs';
+import { prisma } from '@documenso/prisma';
+import { checkboxValidationSigns } from '@documenso/ui/primitives/document-flow/field-items-advanced-settings/constants';
+import type { DocumentData, Envelope, EnvelopeItem, Field, Recipient } from '@prisma/client';
 import {
   DocumentSigningOrder,
   DocumentStatus,
@@ -10,13 +17,8 @@ import {
   WebhookTriggerEvents,
 } from '@prisma/client';
 
-import { DOCUMENT_AUDIT_LOG_TYPE } from '@documenso/lib/types/document-audit-logs';
-import type { ApiRequestMetadata } from '@documenso/lib/universal/extract-request-metadata';
-import { createDocumentAuditLogData } from '@documenso/lib/utils/document-audit-logs';
-import { prisma } from '@documenso/prisma';
-import { checkboxValidationSigns } from '@documenso/ui/primitives/document-flow/field-items-advanced-settings/constants';
-
 import { validateCheckboxLength } from '../../advanced-fields-validation/validate-checkbox';
+import { DIRECT_TEMPLATE_RECIPIENT_EMAIL } from '../../constants/direct-templates';
 import { AppError, AppErrorCode } from '../../errors/app-error';
 import { jobs } from '../../jobs/client';
 import { extractDerivedDocumentEmailSettings } from '../../types/document-email';
@@ -28,19 +30,18 @@ import {
   ZRadioFieldMeta,
   ZTextFieldMeta,
 } from '../../types/field-meta';
-import {
-  ZWebhookDocumentSchema,
-  mapEnvelopeToWebhookDocumentPayload,
-} from '../../types/webhook-payload';
+import { isTspEnvelope } from '../../types/signature-level';
+import { mapEnvelopeToWebhookDocumentPayload, ZWebhookDocumentSchema } from '../../types/webhook-payload';
 import { getFileServerSide } from '../../universal/upload/get-file.server';
-import { putPdfFileServerSide } from '../../universal/upload/put-file.server';
+import { putNormalizedPdfFileServerSide } from '../../universal/upload/put-file.server';
 import { isDocumentCompleted } from '../../utils/document';
 import { extractDocumentAuthMethods } from '../../utils/document-auth';
 import { type EnvelopeIdOptions, mapSecondaryIdToDocumentId } from '../../utils/envelope';
 import { toCheckboxCustomText, toRadioCustomText } from '../../utils/fields';
-import { isRecipientEmailValidForSending } from '../../utils/recipients';
+import { getRecipientsWithMissingFields, isRecipientEmailValidForSending } from '../../utils/recipients';
 import { getEnvelopeWhereInput } from '../envelope/get-envelope-by-id';
 import { insertFormValuesInPdf } from '../pdf/insert-form-values-in-pdf';
+import { assertUserNotDisabledById } from '../user/assert-user-not-disabled';
 import { triggerWebhook } from '../webhooks/trigger/trigger-webhook';
 
 export type SendDocumentOptions = {
@@ -51,13 +52,12 @@ export type SendDocumentOptions = {
   requestMetadata: ApiRequestMetadata;
 };
 
-export const sendDocument = async ({
-  id,
-  userId,
-  teamId,
-  sendEmail,
-  requestMetadata,
-}: SendDocumentOptions) => {
+export const sendDocument = async ({ id, userId, teamId, sendEmail, requestMetadata }: SendDocumentOptions) => {
+  // Refuse to send on behalf of a disabled account. Guards distribute /
+  // redistribute / template-use routes, the bulk-send job, and direct
+  // templates that auto-send on creation.
+  await assertUserNotDisabledById({ userId });
+
   const { envelopeWhereInput } = await getEnvelopeWhereInput({
     id,
     type: EnvelopeType.DOCUMENT,
@@ -86,6 +86,19 @@ export const sendDocument = async ({
           },
         },
       },
+      team: {
+        select: {
+          organisation: {
+            select: {
+              organisationClaim: {
+                select: {
+                  recipientCount: true,
+                },
+              },
+            },
+          },
+        },
+      },
     },
   });
 
@@ -97,13 +110,42 @@ export const sendDocument = async ({
     throw new Error('Document has no recipients');
   }
 
+  // A recipientCount of 0 means unlimited recipients are allowed.
+  const maximumRecipientCount = envelope.team.organisation.organisationClaim.recipientCount;
+
+  if (maximumRecipientCount > 0 && envelope.recipients.length > maximumRecipientCount) {
+    throw new AppError('RECIPIENT_LIMIT_EXCEEDED', {
+      message: `You cannot send a document with more than ${maximumRecipientCount} recipients`,
+      statusCode: 400,
+    });
+  }
+
   if (isDocumentCompleted(envelope.status)) {
     throw new Error('Can not send completed document');
   }
 
   const legacyDocumentId = mapSecondaryIdToDocumentId(envelope.secondaryId);
 
-  const signingOrder = envelope.documentMeta?.signingOrder || DocumentSigningOrder.PARALLEL;
+  let signingOrder = envelope.documentMeta?.signingOrder || DocumentSigningOrder.PARALLEL;
+
+  if (isTspEnvelope(envelope) && signingOrder === DocumentSigningOrder.PARALLEL && envelope.documentMeta) {
+    console.warn(
+      `[CSC] Coercing signingOrder=PARALLEL → SEQUENTIAL for ${envelope.signatureLevel} envelope ${envelope.id} at send time. The schema-layer guard should have caught this earlier.`,
+    );
+
+    await prisma.documentMeta.update({
+      where: {
+        id: envelope.documentMeta.id,
+      },
+      data: {
+        signingOrder: DocumentSigningOrder.SEQUENTIAL,
+      },
+    });
+
+    signingOrder = DocumentSigningOrder.SEQUENTIAL;
+
+    envelope.documentMeta.signingOrder = DocumentSigningOrder.SEQUENTIAL;
+  }
 
   let recipientsToNotify = envelope.recipients;
 
@@ -112,17 +154,13 @@ export const sendDocument = async ({
     recipientsToNotify = envelope.recipients
       .filter((r) => r.signingStatus === SigningStatus.NOT_SIGNED && r.role !== RecipientRole.CC)
       .slice(0, 1);
-
-    // Secondary filter so we aren't resending if the current active recipient has already
-    // received the envelope.
-    recipientsToNotify.filter((r) => r.sendStatus !== SendStatus.SENT);
   }
 
   if (envelope.envelopeItems.length === 0) {
     throw new Error('Missing envelope items');
   }
 
-  if (envelope.formValues) {
+  if (envelope.formValues && envelope.status === DocumentStatus.DRAFT) {
     await Promise.all(
       envelope.envelopeItems.map(async (envelopeItem) => {
         await injectFormValuesIntoDocument(envelope, envelopeItem);
@@ -148,34 +186,21 @@ export const sendDocument = async ({
     }
   });
 
-  // Commented out server side checks for minimum 1 signature per signer now since we need to
-  // decide if we want to enforce this for API & templates.
-  // const fields = await getFieldsForDocument({
-  //   documentId: documentId,
-  //   userId: userId,
-  // });
+  // Validate that recipients who require fields (e.g., signers need signature fields) have them.
+  const recipientsWithMissingFields = getRecipientsWithMissingFields(envelope.recipients, envelope.fields);
 
-  // const fieldsWithSignerEmail = fields.map((field) => ({
-  //   ...field,
-  //   signerEmail:
-  //     envelope.Recipient.find((recipient) => recipient.id === field.recipientId)?.email ?? '',
-  // }));
+  if (recipientsWithMissingFields.length > 0) {
+    const missingRecipientDescriptions = recipientsWithMissingFields
+      .map((r) => (r.name ? `${r.name} (${r.email}, id: ${r.id})` : `${r.email} (id: ${r.id})`))
+      .join(', ');
 
-  // const everySignerHasSignature = document?.Recipient.every(
-  //   (recipient) =>
-  //     recipient.role !== RecipientRole.SIGNER ||
-  //     fieldsWithSignerEmail.some(
-  //       (field) => field.type === 'SIGNATURE' && field.signerEmail === recipient.email,
-  //     ),
-  // );
-
-  // if (!everySignerHasSignature) {
-  //   throw new Error('Some signers have not been assigned a signature field.');
-  // }
+    throw new AppError(AppErrorCode.MISSING_SIGNATURE_FIELD, {
+      message: `The following recipients are missing required fields: ${missingRecipientDescriptions}. Signers must have at least one signature field.`,
+    });
+  }
 
   const allRecipientsHaveNoActionToTake = envelope.recipients.every(
-    (recipient) =>
-      recipient.role === RecipientRole.CC || recipient.signingStatus === SigningStatus.SIGNED,
+    (recipient) => recipient.role === RecipientRole.CC || recipient.signingStatus === SigningStatus.SIGNED,
   );
 
   if (allRecipientsHaveNoActionToTake) {
@@ -212,13 +237,19 @@ export const sendDocument = async ({
         });
       }
 
-      const fieldToAutoInsert = extractFieldAutoInsertValues(unknownField);
+      const fieldToAutoInsert = extractFieldAutoInsertValues(unknownField, recipient);
 
       // Only auto-insert fields if the recipient has not been sent the document yet.
       if (fieldToAutoInsert && recipient.sendStatus !== SendStatus.SENT) {
         fieldsToAutoInsert.push(fieldToAutoInsert);
       }
     }
+  }
+
+  if (isTspEnvelope(envelope) && envelope.status === DocumentStatus.DRAFT) {
+    await materializeTspAnchorsForEnvelope({
+      envelopeId: envelope.id,
+    });
   }
 
   const updatedEnvelope = await prisma.$transaction(async (tx) => {
@@ -262,6 +293,28 @@ export const sendDocument = async ({
           },
           // Don't put metadata or user here since it's a system event.
         }),
+      });
+    }
+
+    const expiresAt = resolveExpiresAt(envelope.documentMeta?.envelopeExpirationPeriod ?? null);
+
+    // Set expiresAt on each recipient that hasn't already signed/rejected.
+    // Exclude CC recipients since they don't sign and shouldn't be subject to expiry.
+    if (expiresAt) {
+      await tx.recipient.updateMany({
+        where: {
+          envelopeId: envelope.id,
+          signingStatus: {
+            notIn: [SigningStatus.SIGNED, SigningStatus.REJECTED],
+          },
+          role: {
+            not: RecipientRole.CC,
+          },
+        },
+        data: {
+          expiresAt,
+          expirationNotifiedAt: null,
+        },
       });
     }
 
@@ -334,7 +387,7 @@ const injectFormValuesIntoDocument = async (
     fileName = `${envelope.title}.pdf`;
   }
 
-  const newDocumentData = await putPdfFileServerSide({
+  const newDocumentData = await putNormalizedPdfFileServerSide({
     name: fileName,
     type: 'application/pdf',
     arrayBuffer: async () => Promise.resolve(prefilled),
@@ -357,6 +410,7 @@ const injectFormValuesIntoDocument = async (
  */
 export const extractFieldAutoInsertValues = (
   unknownField: Field,
+  recipient: Pick<Recipient, 'email'>,
 ): { fieldId: number; customText: string } | null => {
   const parsedField = ZFieldAndMetaSchema.safeParse(unknownField);
 
@@ -368,6 +422,18 @@ export const extractFieldAutoInsertValues = (
 
   const field = parsedField.data;
   const fieldId = unknownField.id;
+
+  // Auto insert email fields if the recipient has a valid email.
+  if (
+    field.type === FieldType.EMAIL &&
+    isRecipientEmailValidForSending(recipient) &&
+    recipient.email !== DIRECT_TEMPLATE_RECIPIENT_EMAIL
+  ) {
+    return {
+      fieldId,
+      customText: recipient.email,
+    };
+  }
 
   // Auto insert text fields with prefilled values.
   if (field.type === FieldType.TEXT) {
@@ -421,11 +487,7 @@ export const extractFieldAutoInsertValues = (
 
   // Auto insert checkbox fields with the pre-checked values.
   if (field.type === FieldType.CHECKBOX) {
-    const {
-      values = [],
-      validationRule,
-      validationLength,
-    } = ZCheckboxFieldMeta.parse(field.fieldMeta);
+    const { values = [], validationRule, validationLength } = ZCheckboxFieldMeta.parse(field.fieldMeta);
 
     const checkedIndices: number[] = [];
 

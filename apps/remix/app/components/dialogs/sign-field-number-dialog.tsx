@@ -1,10 +1,3 @@
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useLingui } from '@lingui/react/macro';
-import { Trans } from '@lingui/react/macro';
-import { createCallable } from 'react-call';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
-
 import type { TNumberFieldMeta } from '@documenso/lib/types/field-meta';
 import { cn } from '@documenso/ui/lib/utils';
 import { Button } from '@documenso/ui/primitives/button';
@@ -17,15 +10,13 @@ import {
   DialogTitle,
 } from '@documenso/ui/primitives/dialog';
 import { numberFormatValues } from '@documenso/ui/primitives/document-flow/field-items-advanced-settings/constants';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@documenso/ui/primitives/form/form';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@documenso/ui/primitives/form/form';
 import { Input } from '@documenso/ui/primitives/input';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { createCallable } from 'react-call';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 
 export type SignFieldNumberDialogProps = {
   fieldMeta: TNumberFieldMeta;
@@ -107,28 +98,21 @@ export const SignFieldNumberDialog = createCallable<SignFieldNumberDialogProps, 
       <Dialog open={true} onOpenChange={(value) => (!value ? call.end(null) : null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              <Trans>Sign Number Field</Trans>
-            </DialogTitle>
+            <DialogTitle>{fieldMeta.label || <Trans>Enter Number</Trans>}</DialogTitle>
 
             <DialogDescription className="mt-4">
-              <Trans>Insert a value into the number field</Trans>
+              <Trans>Please enter a number</Trans>
             </DialogDescription>
           </DialogHeader>
 
           <Form {...form}>
             <form onSubmit={form.handleSubmit((data) => call.end(data.number))}>
-              <fieldset
-                className="flex h-full flex-col space-y-4"
-                disabled={form.formState.isSubmitting}
-              >
+              <fieldset className="flex h-full flex-col space-y-4" disabled={form.formState.isSubmitting}>
                 <FormField
                   control={form.control}
                   name="number"
                   render={({ field, fieldState }) => (
                     <FormItem>
-                      {fieldMeta.label && <FormLabel>{fieldMeta.label}</FormLabel>}
-
                       <FormControl>
                         <Input
                           placeholder={fieldMeta.placeholder ?? t`Enter your number here`}
@@ -150,7 +134,7 @@ export const SignFieldNumberDialog = createCallable<SignFieldNumberDialogProps, 
                   </Button>
 
                   <Button type="submit">
-                    <Trans>Sign</Trans>
+                    <Trans>Enter</Trans>
                   </Button>
                 </DialogFooter>
               </fieldset>

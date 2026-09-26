@@ -1,3 +1,6 @@
+/**
+ * @deprecated We use Konva to generate the certificate PDF now.
+ */
 import { DateTime } from 'luxon';
 import type { Browser } from 'playwright';
 
@@ -6,7 +9,7 @@ import {
   NEXT_PUBLIC_WEBAPP_URL,
   USE_INTERNAL_URL_BROWSERLESS,
 } from '../../constants/app';
-import { type SupportedLanguageCodes, isValidLanguageCode } from '../../constants/i18n';
+import { isValidLanguageCode, type SupportedLanguageCodes } from '../../constants/i18n';
 import { env } from '../../utils/env';
 import { encryptSecondaryData } from '../crypto/encrypt';
 
@@ -33,7 +36,9 @@ export const getCertificatePdf = async ({ documentId, language }: GetCertificate
     // !: Previously we would have to keep the playwright version in sync with the browserless version to avoid errors.
     browser = await chromium.connectOverCDP(browserlessUrl);
   } else {
-    browser = await chromium.launch();
+    browser = await chromium.launch({
+      executablePath: env('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH') || undefined,
+    });
   }
 
   if (!browser) {
@@ -52,9 +57,7 @@ export const getCertificatePdf = async ({ documentId, language }: GetCertificate
     {
       name: 'lang',
       value: lang,
-      url: USE_INTERNAL_URL_BROWSERLESS()
-        ? NEXT_PUBLIC_WEBAPP_URL()
-        : NEXT_PRIVATE_INTERNAL_WEBAPP_URL(),
+      url: USE_INTERNAL_URL_BROWSERLESS() ? NEXT_PUBLIC_WEBAPP_URL() : NEXT_PRIVATE_INTERNAL_WEBAPP_URL(),
     },
   ]);
 

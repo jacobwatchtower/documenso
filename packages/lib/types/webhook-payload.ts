@@ -29,6 +29,11 @@ export const ZWebhookRecipientSchema = z.object({
   token: z.string(),
   documentDeletedAt: z.coerce.date().nullable(),
   expiresAt: z.coerce.date().nullable(),
+  /**
+   * Fork: legacy alias of `expiresAt` (renamed upstream in v2.18). Kept because the
+   * BPTP backend's webhook schema still requires `expired`.
+   */
+  expired: z.coerce.date().nullable(),
   expirationNotifiedAt: z.coerce.date().nullable(),
   signedAt: z.coerce.date().nullable(),
   authOptions: z.any().nullable(),
@@ -127,6 +132,7 @@ export const mapEnvelopeToWebhookDocumentPayload = (
     token: recipient.token,
     documentDeletedAt: recipient.documentDeletedAt,
     expiresAt: recipient.expiresAt,
+    expired: recipient.expiresAt,
     expirationNotifiedAt: recipient.expirationNotifiedAt,
     signedAt: recipient.signedAt,
     authOptions: recipient.authOptions,

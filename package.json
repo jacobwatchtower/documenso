@@ -7,7 +7,7 @@
   ],
   "version": "2.18.0",
   "scripts": {
-    "postinstall": "patch-package && npm run prisma:generate",
+    "postinstall": "patch-package && (npm run prisma:generate || echo 'postinstall: prisma:generate skipped (dev deps missing, e.g. docker runtime stage)')",
     "build": "turbo run build",
     "dev": "npm run translate:compile && turbo run dev --filter=@documenso/remix",
     "dev:remix": "npm run translate:compile && turbo run dev --filter=@documenso/remix",
